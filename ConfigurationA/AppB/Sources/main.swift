@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Security
 
 // Objective-C 互換の protocol として公開し、NSXPCInterface に渡す。
@@ -90,17 +91,28 @@ func callPeer(serviceName: String, exportCallback: Bool) {
     connection.invalidate()
 }
 
-let args = Set(CommandLine.arguments.dropFirst())
-let listener = NSXPCListener(machServiceName: "com.example.appB.service")
-let delegate = ListenerDelegate()
-listener.delegate = delegate
-listener.resume()
-Logger.log("listener started service=com.example.appB.service")
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let args = Set(CommandLine.arguments.dropFirst())
+    private let listener = NSXPCListener(machServiceName: "com.example.appB.service")
+    private let listenerDelegate = ListenerDelegate()
 
-if args.contains("--call-peer") {
-    callPeer(serviceName: "com.example.appA.service", exportCallback: args.contains("--variant=one-connection"))
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        listener.delegate = listenerDelegate
+        listener.resume()
+        Logger.log("listener started service=com.example.appB.service")
+
+        if args.contains("--call-peer") {
+            callPeer(serviceName: "com.example.appA.service", exportCallback: args.contains("--variant=one-connection"))
+        }
+
+        if args.contains("--exit") {
+            NSApp.terminate(nil)
+        }
+    }
 }
 
-if args.contains("--listen-only") || !args.contains("--exit") {
-    RunLoop.current.run()
-}
+let applicationDelegate = AppDelegate()
+NSApplication.shared.delegate = applicationDelegate
+NSApplication.shared.setActivationPolicy(.accessory)
+NSApp.run()

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Security
 
 // SharedService が単一 vendor になり、AppA/AppB は client として接続する。
@@ -53,9 +54,19 @@ final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
     }
 }
 
-let listener = NSXPCListener(machServiceName: "com.example.shared.service")
-let delegate = ListenerDelegate()
-listener.delegate = delegate
-listener.resume()
-Logger.log("listener started service=com.example.shared.service")
-RunLoop.current.run()
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let listener = NSXPCListener(machServiceName: "com.example.shared.service")
+    private let listenerDelegate = ListenerDelegate()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        listener.delegate = listenerDelegate
+        listener.resume()
+        Logger.log("listener started service=com.example.shared.service")
+    }
+}
+
+let applicationDelegate = AppDelegate()
+NSApplication.shared.delegate = applicationDelegate
+NSApplication.shared.setActivationPolicy(.accessory)
+NSApp.run()

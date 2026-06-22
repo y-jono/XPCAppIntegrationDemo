@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 // AppB は listener を持たず、launchd 登録済み SharedService へ接続する。
 @objc(SharedXPCProtocol)
@@ -25,28 +26,42 @@ final class CallbackService: NSObject, ClientCallbackProtocol {
     }
 }
 
-let args = Set(CommandLine.arguments.dropFirst())
-let connection = NSXPCConnection(machServiceName: "com.example.shared.service", options: [])
-connection.remoteObjectInterface = NSXPCInterface(with: SharedXPCProtocol.self)
-if args.contains("--variant=one-connection") {
-    connection.exportedInterface = NSXPCInterface(with: ClientCallbackProtocol.self)
-    connection.exportedObject = CallbackService()
-}
-connection.interruptionHandler = { Logger.log("interruption service=com.example.shared.service") }
-connection.invalidationHandler = { Logger.log("invalidation service=com.example.shared.service") }
-connection.resume()
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let args = Set(CommandLine.arguments.dropFirst())
 
-Logger.log("SharedService 呼び出し開始 variant=\(args.contains("--variant=one-connection") ? "one-connection" : "two-connection")")
-let proxy = connection.synchronousRemoteObjectProxyWithErrorHandler { error in
-    Logger.log("同期 proxy error: \(error.localizedDescription)")
-} as? SharedXPCProtocol
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(.accessory)
 
-guard let proxy else {
-    Logger.log("proxy 生成失敗。LaunchAgent 登録、bootstrap domain、署名拒否を確認してください")
-    exit(2)
+        let connection = NSXPCConnection(machServiceName: "com.example.shared.service", options: [])
+        connection.remoteObjectInterface = NSXPCInterface(with: SharedXPCProtocol.self)
+        if args.contains("--variant=one-connection") {
+            connection.exportedInterface = NSXPCInterface(with: ClientCallbackProtocol.self)
+            connection.exportedObject = CallbackService()
+        }
+        connection.interruptionHandler = { Logger.log("interruption service=com.example.shared.service") }
+        connection.invalidationHandler = { Logger.log("invalidation service=com.example.shared.service") }
+        connection.resume()
+
+        Logger.log("SharedService 呼び出し開始 variant=\(args.contains("--variant=one-connection") ? "one-connection" : "two-connection")")
+        let proxy = connection.synchronousRemoteObjectProxyWithErrorHandler { error in
+            Logger.log("同期 proxy error: \(error.localizedDescription)")
+        } as? SharedXPCProtocol
+
+        guard let proxy else {
+            Logger.log("proxy 生成失敗。LaunchAgent 登録、bootstrap domain、署名拒否を確認してください")
+            NSApp.terminate(nil)
+            return
+        }
+
+        proxy.ping("AppB", message: "hello") { reply in
+            Logger.log("reply=\(reply)")
+        }
+        connection.invalidate()
+        NSApp.terminate(nil)
+    }
 }
 
-proxy.ping("AppB", message: "hello") { reply in
-    Logger.log("reply=\(reply)")
-}
-connection.invalidate()
+let applicationDelegate = AppDelegate()
+NSApplication.shared.delegate = applicationDelegate
+NSApplication.shared.setActivationPolicy(.accessory)
+NSApp.run()

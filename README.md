@@ -2,6 +2,8 @@
 
 macOS の `NSConnection` 風の対称 P2P 通信を `NSXPCConnection` へ移行するときに、Debug では成功し Release では失敗する問題を切り分けるための最小再現プロジェクトです。各ターゲットは LSUIElement の `.app` バンドルとして生成されます。実装は Swift ですが、失敗要因は Objective-C 固有ではありません。主因は launchd の Mach service 登録、LaunchAgent の `.app/Contents/MacOS/<exec>` パス、署名、Hardened Runtime、Notarization、bootstrap domain の差であり、言語非依存です。
 
+各 `.app` の起動部は `NSApplicationDelegate.applicationDidFinishLaunching(_:)` で listener resume / peer 呼び出しを行う AppKit ライフサイクルに載せ替えています。
+
 ## 構成
 
 - `ConfigurationA/`: `AppA.app` と `AppB.app` の双方が `NSXPCListener(machServiceName:)` を持つ構成。Mach service は `com.example.appA.service` / `com.example.appB.service`。
