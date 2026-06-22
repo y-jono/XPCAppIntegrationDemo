@@ -1,6 +1,6 @@
 # XPC 切り分け手順
 
-この文書は Debug 成功 / Release 失敗を、コード、launchd、署名、Hardened Runtime、Notarization に分けて確認するためのコマンド集です。
+この文書は Debug 成功 / Release 失敗を、コード、launchd、署名、Hardened Runtime、quarantine / App Translocation に分けて確認するためのコマンド集です。Apple Developer Program メンバーシップ期限切れのため Developer ID Application 証明書と Notarization は対象外です。Release は Apple Development / Team ID `6WFKUJRXCU` + Hardened Runtime で再現します。
 
 ## 1. Mach service 登録
 
@@ -60,7 +60,7 @@ sudo launchctl print "system/com.example.appA.service" 2>&1 || true
 
 ## 4. Bundle ID suffix と requirement
 
-Debug は `com.example.AppA.debug`、Release は `com.example.AppA` のように bundle id が変わります。本プロジェクトの pbxproj も差を明示しています。
+Debug は `com.example.AppA.Debug`、Release は `com.example.AppA` のように bundle id が変わります。本プロジェクトの pbxproj も差を明示しています。
 
 ```sh
 codesign -dv --verbose=4 ConfigurationA/build/Debug/AppA.app 2>&1 | egrep 'Identifier|TeamIdentifier|Authority|Runtime'
@@ -73,7 +73,19 @@ codesign -d --entitlements :- ConfigurationA/build/Release/AppA.app 2>/dev/null
 
 ## 5. code signing requirement 拒否
 
-実アプリで `shouldAcceptNewConnection` 内に requirement 検証がある場合、拒否理由を必ずログに出します。
+本プロジェクトでは Release の `shouldAcceptNewConnection` 内で requirement 検証を行います。Debug は `#if DEBUG` でスキップします。
+
+壊れた requirement。Release デフォルトで使われ、Apple Development 署名を拒否します。
+
+```text
+anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists
+```
+
+正しい requirement。`BUILD_USE_CORRECT_REQUIREMENT=1` でビルドすると使われます。
+
+```text
+anchor apple generic and certificate leaf[subject.OU] = "6WFKUJRXCU"
+```
 
 ```sh
 log stream --style compact --predicate 'eventMessage CONTAINS "shouldAcceptNewConnection" OR eventMessage CONTAINS "署名検査" OR eventMessage CONTAINS "rejected"'
@@ -82,7 +94,18 @@ codesign -R='certificate leaf[subject.OU] = "TEAMID"' -v /path/to/AppA.app
 codesign -R='identifier "com.example.AppA"' -v /path/to/AppA.app
 ```
 
-採否: Debug は Apple Development、Release は Developer ID なので、anchor や certificate chain の条件が違います。Team ID と identifier のどちらで見るかを明確にします。
+採否: Release で `requirement 不一致で拒否` が出れば、決定的再現は成功です。修正するには `BUILD_USE_CORRECT_REQUIREMENT=1` を付けて再ビルドします。
+
+```sh
+ConfigurationA/Scripts/build.sh Release
+ConfigurationA/Scripts/install_launchagents.sh Release
+ConfigurationA/Scripts/test_one_connection.sh Release
+tail -f /tmp/com.example.appA.service.err.log /tmp/com.example.appB.service.err.log
+
+BUILD_USE_CORRECT_REQUIREMENT=1 ConfigurationA/Scripts/build.sh Release
+ConfigurationA/Scripts/install_launchagents.sh Release
+ConfigurationA/Scripts/test_one_connection.sh Release
+```
 
 ## 6. Hardened Runtime / entitlements
 
@@ -96,9 +119,9 @@ codesign -d --entitlements :- /path/to/Debug/AppA.app 2>/dev/null
 
 採否: `get-task-allow` の有無、Library Validation、JIT、Apple Events などが通信相手のロードや補助処理に影響していないかを確認します。XPC lookup そのものは entitlement ではなく launchd 登録が前提です。
 
-## 7. Notarization / quarantine / App Translocation
+## 7. Quarantine / App Translocation
 
-quarantine が残った `.app` を Downloads 等から起動すると translocation により `/private/var/folders/.../AppTranslocation/...` 配下へ実行パスが変わる場合があります。LaunchAgent が固定パスを指す設計では致命的です。
+Notarization はメンバーシップ無効のため対象外です。quarantine が残った `.app` を Downloads 等から起動すると translocation により `/private/var/folders/.../AppTranslocation/...` 配下へ実行パスが変わる場合があります。LaunchAgent が固定パスを指す設計では致命的です。
 
 ```sh
 xattr -lr /path/to/App.app | grep -i quarantine || true
@@ -126,10 +149,29 @@ grep -E '同期 proxy error|interruption|invalidation|lookup|reply' /tmp/xpc-*.l
 
 ## Release 失敗を成功へ転じる手順
 
-1. `PLACEHOLDER_TEAM_ID` と `Developer ID Application: PLACEHOLDER` を実値に置換する。
-2. `ConfigurationA/Scripts/build.sh Release` または `ConfigurationB/Scripts/build.sh Release` を実行する。
+1. デフォルトの壊れた requirement のまま `ConfigurationA/Scripts/build.sh Release` または `ConfigurationB/Scripts/build.sh Release` を実行する。
 3. `install_launchagents.sh Release` で plist を Release の `.app/Contents/MacOS/<exec>` 絶対パスへ再生成する。
 4. `launchctl print gui/$(id -u)/...` で `program` と `MachServices` を確認する。
 5. `codesign -dv --verbose=4` と `codesign -d --entitlements :-` で Debug/Release 差を確認する。
 6. `log stream` と `/tmp/com.example.*.err.log` を見ながら test script を実行する。
-7. requirement 拒否なら `shouldAcceptNewConnection` の条件を Developer ID / Release bundle id に合わせる。
+7. requirement 拒否を確認したら、`BUILD_USE_CORRECT_REQUIREMENT=1` を付けて再ビルドし、Team ID `6WFKUJRXCU` の requirement に切り替える。
+
+## Debug パス事故の再現
+
+原因 #2 は LaunchAgent が Debug の `.app` を指したままになる事故です。
+
+```sh
+ConfigurationA/Scripts/build.sh Debug
+ConfigurationA/Scripts/install_launchagents.sh Debug
+plutil -p "$HOME/Library/LaunchAgents/com.example.appA.service.plist" | grep ProgramArguments -A4
+
+ConfigurationA/Scripts/build.sh Release
+ConfigurationA/Scripts/test_one_connection.sh Release
+```
+
+この時点で plist が `build/Debug/AppA.app/Contents/MacOS/AppA` を指していれば、Release を検証しているつもりでも launchd 側は Debug を起動します。修正は Release の LaunchAgent を再登録することです。
+
+```sh
+ConfigurationA/Scripts/install_launchagents.sh Release
+plutil -p "$HOME/Library/LaunchAgents/com.example.appA.service.plist" | grep ProgramArguments -A4
+```
