@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.example.appA.service</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__BUILD_PRODUCTS__/AppA.app/Contents/MacOS/AppA</string>
+		<string>--listen-only</string>
+	</array>
+	<key>MachServices</key>
+	<dict>
+		<key>com.example.appA.service</key>
+		<true/>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/tmp/com.example.appA.service.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/tmp/com.example.appA.service.out.log</string>
+</dict>
+</plist>
