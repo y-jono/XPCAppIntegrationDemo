@@ -81,7 +81,7 @@ final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
 
     private func selectedRequirementText() -> String {
         #if USE_CORRECT_REQUIREMENT
-        return #"anchor apple generic and certificate leaf[subject.OU] = "6WFKUJRXCU""#
+        return #"anchor apple generic and certificate leaf[subject.OU] = "EXAMPLE123""#
         #else
         return #"anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"#
         #endif

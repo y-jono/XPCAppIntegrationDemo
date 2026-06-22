@@ -1,6 +1,6 @@
 # XPC 切り分け手順
 
-この文書は Debug 成功 / Release 失敗を、コード、launchd、署名、Hardened Runtime、quarantine / App Translocation に分けて確認するためのコマンド集です。Apple Developer Program メンバーシップ期限切れのため Developer ID Application 証明書と Notarization は対象外です。Release は Apple Development / Team ID `6WFKUJRXCU` + Hardened Runtime で再現します。
+この文書は Debug 成功 / Release 失敗を、コード、launchd、署名、Hardened Runtime、quarantine / App Translocation に分けて確認するためのコマンド集です。Apple Developer Program メンバーシップ期限切れのため Developer ID Application 証明書と Notarization は対象外です。Release は Apple Development / Team ID `EXAMPLE123` + Hardened Runtime で再現します。
 
 ## 1. Mach service 登録
 
@@ -84,7 +84,7 @@ anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exist
 正しい requirement。`BUILD_USE_CORRECT_REQUIREMENT=1` でビルドすると使われます。
 
 ```text
-anchor apple generic and certificate leaf[subject.OU] = "6WFKUJRXCU"
+anchor apple generic and certificate leaf[subject.OU] = "EXAMPLE123"
 ```
 
 ```sh
@@ -154,7 +154,7 @@ grep -E '同期 proxy error|interruption|invalidation|lookup|reply' /tmp/xpc-*.l
 4. `launchctl print gui/$(id -u)/...` で `program` と `MachServices` を確認する。
 5. `codesign -dv --verbose=4` と `codesign -d --entitlements :-` で Debug/Release 差を確認する。
 6. `log stream` と `/tmp/com.example.*.err.log` を見ながら test script を実行する。
-7. requirement 拒否を確認したら、`BUILD_USE_CORRECT_REQUIREMENT=1` を付けて再ビルドし、Team ID `6WFKUJRXCU` の requirement に切り替える。
+7. requirement 拒否を確認したら、`BUILD_USE_CORRECT_REQUIREMENT=1` を付けて再ビルドし、Team ID `EXAMPLE123` の requirement に切り替える。
 
 ## Debug パス事故の再現
 
