@@ -1,0 +1,45 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+		B00000000000000000000001 = {isa = PBXProject; attributes = {LastSwiftUpdateCheck = 2650; LastUpgradeCheck = 2650;}; buildConfigurationList = B00000000000000000000002; compatibilityVersion = "Xcode 16.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = B00000000000000000000003; productRefGroup = B00000000000000000000004; projectDirPath = ""; projectRoot = ""; targets = (B00000000000000000000010, B00000000000000000000020, B00000000000000000000030);};
+		B00000000000000000000003 = {isa = PBXGroup; children = (B00000000000000000000040, B00000000000000000000041, B00000000000000000000042, B00000000000000000000004); sourceTree = "<group>";};
+		B00000000000000000000004 = {isa = PBXGroup; children = (B00000000000000000000050, B00000000000000000000051, B00000000000000000000052); name = Products; sourceTree = "<group>";};
+		B00000000000000000000040 = {isa = PBXGroup; children = (B00000000000000000000060, B00000000000000000000061); path = AppA; sourceTree = "<group>";};
+		B00000000000000000000041 = {isa = PBXGroup; children = (B00000000000000000000062, B00000000000000000000063); path = AppB; sourceTree = "<group>";};
+		B00000000000000000000042 = {isa = PBXGroup; children = (B00000000000000000000064, B00000000000000000000065); path = SharedService; sourceTree = "<group>";};
+		B00000000000000000000060 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/main.swift; sourceTree = "<group>";};
+		B00000000000000000000061 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AppA.entitlements; sourceTree = "<group>";};
+		B00000000000000000000062 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/main.swift; sourceTree = "<group>";};
+		B00000000000000000000063 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AppB.entitlements; sourceTree = "<group>";};
+		B00000000000000000000064 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/main.swift; sourceTree = "<group>";};
+		B00000000000000000000065 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SharedService.entitlements; sourceTree = "<group>";};
+		B00000000000000000000050 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AppA.app; sourceTree = BUILT_PRODUCTS_DIR;};
+		B00000000000000000000051 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AppB.app; sourceTree = BUILT_PRODUCTS_DIR;};
+		B00000000000000000000052 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SharedService.app; sourceTree = BUILT_PRODUCTS_DIR;};
+		B00000000000000000000070 = {isa = PBXBuildFile; fileRef = B00000000000000000000060;};
+		B00000000000000000000071 = {isa = PBXBuildFile; fileRef = B00000000000000000000062;};
+		B00000000000000000000072 = {isa = PBXBuildFile; fileRef = B00000000000000000000064;};
+		B00000000000000000000080 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000070); runOnlyForDeploymentPostprocessing = 0;};
+		B00000000000000000000081 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000071); runOnlyForDeploymentPostprocessing = 0;};
+		B00000000000000000000082 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000072); runOnlyForDeploymentPostprocessing = 0;};
+		B00000000000000000000010 = {isa = PBXNativeTarget; buildConfigurationList = B00000000000000000000110; buildPhases = (B00000000000000000000080); buildRules = (); dependencies = (); name = AppA; productName = AppA; productReference = B00000000000000000000050; productType = "com.apple.product-type.application";};
+		B00000000000000000000020 = {isa = PBXNativeTarget; buildConfigurationList = B00000000000000000000120; buildPhases = (B00000000000000000000081); buildRules = (); dependencies = (); name = AppB; productName = AppB; productReference = B00000000000000000000051; productType = "com.apple.product-type.application";};
+		B00000000000000000000030 = {isa = PBXNativeTarget; buildConfigurationList = B00000000000000000000130; buildPhases = (B00000000000000000000082); buildRules = (); dependencies = (); name = SharedService; productName = SharedService; productReference = B00000000000000000000052; productType = "com.apple.product-type.application";};
+		B00000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000200, B00000000000000000000201); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+		B00000000000000000000110 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000210, B00000000000000000000211); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+		B00000000000000000000120 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000220, B00000000000000000000221); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+		B00000000000000000000130 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000230, B00000000000000000000231); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+		B00000000000000000000200 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = macosx; SWIFT_VERSION = 6.0; MACOSX_DEPLOYMENT_TARGET = 13.0; CONFIGURATION_BUILD_DIR = "$(PROJECT_DIR)/build/$(CONFIGURATION)";};};
+		B00000000000000000000201 = {isa = XCBuildConfiguration; name = Release; buildSettings = {SDKROOT = macosx; SWIFT_VERSION = 6.0; MACOSX_DEPLOYMENT_TARGET = 13.0; CONFIGURATION_BUILD_DIR = "$(PROJECT_DIR)/build/$(CONFIGURATION)"; ENABLE_HARDENED_RUNTIME = YES;};};
+		B00000000000000000000210 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {PRODUCT_NAME = AppA; PRODUCT_BUNDLE_IDENTIFIER = com.example.sharedclient.AppA.debug; WRAPPER_EXTENSION = app; INFOPLIST_FILE = AppA/Info.plist; CODE_SIGN_STYLE = Automatic; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_ENTITLEMENTS = AppA/AppA.entitlements;};};
+		B00000000000000000000211 = {isa = XCBuildConfiguration; name = Release; buildSettings = {PRODUCT_NAME = AppA; PRODUCT_BUNDLE_IDENTIFIER = com.example.sharedclient.AppA; WRAPPER_EXTENSION = app; INFOPLIST_FILE = AppA/Info.plist; CODE_SIGN_STYLE = Manual; DEVELOPMENT_TEAM = PLACEHOLDER_TEAM_ID; CODE_SIGN_IDENTITY = "Developer ID Application: PLACEHOLDER"; CODE_SIGN_ENTITLEMENTS = AppA/AppA.entitlements;};};
+		B00000000000000000000220 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {PRODUCT_NAME = AppB; PRODUCT_BUNDLE_IDENTIFIER = com.example.sharedclient.AppB.debug; WRAPPER_EXTENSION = app; INFOPLIST_FILE = AppB/Info.plist; CODE_SIGN_STYLE = Automatic; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_ENTITLEMENTS = AppB/AppB.entitlements;};};
+		B00000000000000000000221 = {isa = XCBuildConfiguration; name = Release; buildSettings = {PRODUCT_NAME = AppB; PRODUCT_BUNDLE_IDENTIFIER = com.example.sharedclient.AppB; WRAPPER_EXTENSION = app; INFOPLIST_FILE = AppB/Info.plist; CODE_SIGN_STYLE = Manual; DEVELOPMENT_TEAM = PLACEHOLDER_TEAM_ID; CODE_SIGN_IDENTITY = "Developer ID Application: PLACEHOLDER"; CODE_SIGN_ENTITLEMENTS = AppB/AppB.entitlements;};};
+		B00000000000000000000230 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {PRODUCT_NAME = SharedService; PRODUCT_BUNDLE_IDENTIFIER = com.example.shared.service.debug; WRAPPER_EXTENSION = app; INFOPLIST_FILE = SharedService/Info.plist; CODE_SIGN_STYLE = Automatic; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_ENTITLEMENTS = SharedService/SharedService.entitlements;};};
+		B00000000000000000000231 = {isa = XCBuildConfiguration; name = Release; buildSettings = {PRODUCT_NAME = SharedService; PRODUCT_BUNDLE_IDENTIFIER = com.example.shared.service; WRAPPER_EXTENSION = app; INFOPLIST_FILE = SharedService/Info.plist; CODE_SIGN_STYLE = Manual; DEVELOPMENT_TEAM = PLACEHOLDER_TEAM_ID; CODE_SIGN_IDENTITY = "Developer ID Application: PLACEHOLDER"; CODE_SIGN_ENTITLEMENTS = SharedService/SharedService.entitlements;};};
+	};
+	rootObject = B00000000000000000000001;
+}

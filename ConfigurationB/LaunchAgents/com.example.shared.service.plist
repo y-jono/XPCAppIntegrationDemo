@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.example.shared.service</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__BUILD_PRODUCTS__/SharedService.app/Contents/MacOS/SharedService</string>
+	</array>
+	<key>MachServices</key>
+	<dict>
+		<key>com.example.shared.service</key>
+		<true/>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/tmp/com.example.shared.service.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/tmp/com.example.shared.service.out.log</string>
+</dict>
+</plist>
