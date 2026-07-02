@@ -8,6 +8,45 @@ macOS の古い通信方式 `NSConnection`（2 つのアプリが対等にやり
 
 > **XPC / launchd / コード署名などの用語が分からない場合は、先に [PRIMER.md](PRIMER.md) を読んでください。** 前提知識ゼロから読める入門ガイドです。本 README と [DIAGNOSIS.md](DIAGNOSIS.md) は、その用語を知っている前提で書いています。
 
+## クイックスタート: 実験一式を一発で再現する
+
+必要なものは **macOS と Xcode 本体** だけです（App Store からインストールできます。Command Line Tools だけでは不足です）。Debug ビルドは ad-hoc 署名なので、**Apple Developer アカウントは不要**です。
+
+```sh
+git clone https://github.com/y-jono/XPCAppIntegrationDemo.git
+cd XPCAppIntegrationDemo
+ConfigurationB/Scripts/reproduce.sh
+```
+
+`reproduce.sh` は次を順に実行し、最後にまとめを表示します。
+
+1. 3 つの `.app` のビルド（Debug）
+2. SharedService の LaunchAgent 登録
+3. 基本シナリオ一式（正常系・起動順序・異常系。`test_scenario.sh Debug all`）
+4. App Sandbox 検証: SharedService だけ sandbox 化（`sandbox-agent`）
+5. App Sandbox 検証: 3 つとも sandbox 化（`sandbox-all`）
+
+成功すると、最後に次のように表示されます。
+
+```text
+==== 再現結果まとめ
+  [OK] 1/5 ビルド (Debug)
+  [OK] 2/5 LaunchAgent 登録
+  [OK] 3/5 基本シナリオ一式 (all)
+  [OK] 4/5 App Sandbox 検証 (sandbox-agent)
+  [OK] 5/5 App Sandbox 検証 (sandbox-all)
+すべて成功しました。
+```
+
+このスクリプトがあなたの Mac に加える変更は次の 2 つだけで、どちらも元に戻せます。
+
+- `~/Library/LaunchAgents/com.example.shared.service.plist` の配置と登録 → `ConfigurationB/Scripts/uninstall_launchagents.sh` で解除
+- sandbox 検証で起動したアプリのコンテナ `~/Library/Containers/com.example.*` の生成（無害。気になる場合は Finder から削除）
+
+うまくいかない場合は [DIAGNOSIS.md](DIAGNOSIS.md) の「確認する順番」に沿って切り分けてください。
+
+Release ビルドで再現したい場合は、次の「セットアップ」で Team ID を置き換えてから `ConfigurationB/Scripts/reproduce.sh Release` を実行してください（sandbox 検証で署名が一時的に ad-hoc になるため、最後に自動で再ビルドして復元します）。
+
 ## セットアップ: 自分の署名で動かす
 
 このリポジトリに書かれている署名の値は、すべて**サンプル値（架空のプレースホルダ）**です。
