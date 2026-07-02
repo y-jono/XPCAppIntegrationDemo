@@ -20,7 +20,14 @@ set -uo pipefail
 #   sandbox-all        AppA/AppB/SharedService の3つとも App Sandbox を有効にした異常系。
 #                      クライアント側の mach-lookup が sandbox に拒否され、
 #                      同期呼び出しが即座に失敗する
-#   all                上記すべてを順に実行する（sandbox-* は署名を差し替えるため除く）
+#   quarantine-client  AppA に quarantine を付けて「配布後・未公証」のクライアント起動を
+#                      再現する異常系。Gatekeeper が exec を SIGKILL し（exit 137）、
+#                      出力ゼロのまま死ぬ
+#   quarantine-agent   SharedService だけ quarantine を付けた検証系。launchd 経由の
+#                      起動は Gatekeeper の exec 検査を受けないため通信は成立して
+#                      しまう（spctl の判定は rejected のまま）
+#   all                上記すべてを順に実行する（sandbox-* / quarantine-* は署名や
+#                      拡張属性を差し替えるため除く）
 #
 # sandbox-agent / sandbox-all はビルド済み .app を Entitlements/sandboxed.entitlements で
 # ad-hoc 再署名して sandbox 化し、実行後に元の entitlements へ再署名して戻す。
@@ -56,6 +63,10 @@ STAGGER_SIMULTANEOUS_SECONDS=0
 WATCHDOG_SECONDS=10
 SANDBOX_ENTITLEMENTS="$ROOT/Entitlements/sandboxed.entitlements"
 SERVICE_ERR_LOG="/tmp/com.example.shared.service.err.log"
+
+# quarantine-* シナリオ用。ダウンロード配布された .app に付く検疫印を模擬する
+# （フラグ 0083 = ダウンロード由来・未承認）。
+QUARANTINE_VALUE="0083;00000000;reproduce;"
 
 APP_A="$ROOT/build/$CONFIGURATION/AppA.app/Contents/MacOS/AppA"
 APP_B="$ROOT/build/$CONFIGURATION/AppB.app/Contents/MacOS/AppB"
@@ -149,6 +160,35 @@ container_dir_for() {
   local app="$1" bundle_id
   bundle_id="$(plutil -extract CFBundleIdentifier raw "$ROOT/build/$CONFIGURATION/$app.app/Contents/Info.plist")"
   echo "$HOME/Library/Containers/$bundle_id"
+}
+
+# quarantine の付与・除去・確認。ダウンロード配布直後の状態を模擬/復元する。
+apply_quarantine() { xattr -r -w com.apple.quarantine "$QUARANTINE_VALUE" "$ROOT/build/$CONFIGURATION/$1.app"; }
+remove_quarantine() { xattr -r -d com.apple.quarantine "$ROOT/build/$CONFIGURATION/$1.app" 2>/dev/null || true; }
+
+assert_quarantined() {
+  local app="$1" desc="$2"
+  if xattr -p com.apple.quarantine "$ROOT/build/$CONFIGURATION/$app.app/Contents/MacOS/$app" >/dev/null 2>&1; then
+    echo "  [PASS] $desc"
+    pass_count=$((pass_count + 1))
+  else
+    echo "  [FAIL] $desc (quarantine 属性が付いていない)"
+    fail_count=$((fail_count + 1))
+  fi
+}
+
+# Gatekeeper の配布可否判定。未公証（ad-hoc / Apple Development）は rejected、
+# Notarization 済み Developer ID 署名なら accepted になる。
+assert_spctl_rejected() {
+  local app="$1" desc="$2" verdict
+  verdict="$(spctl --assess --type execute "$ROOT/build/$CONFIGURATION/$app.app" 2>&1 || true)"
+  if echo "$verdict" | grep -q 'rejected'; then
+    echo "  [PASS] $desc"
+    pass_count=$((pass_count + 1))
+  else
+    echo "  [FAIL] $desc (spctl の判定: $verdict)"
+    fail_count=$((fail_count + 1))
+  fi
 }
 
 # ウォッチドッグ付き実行。WATCHDOG_SECONDS 以内に終了しなければ強制終了し、
@@ -318,6 +358,66 @@ scenario_sandbox_all() {
   "$ROOT/Scripts/cleanup_processes.sh" >/dev/null 2>&1 || true
 }
 
+# AppA に quarantine を付け、「ダウンロード配布した未公証アプリをユーザーが起動した」
+# 状態を再現する異常系。
+# 実測（macOS 26）: シェル / Finder からの起動は Gatekeeper が exec 時点で SIGKILL
+# する（exit 137）。プロセスは 1 行もログを出せないまま死ぬため、アプリ側のログ
+# だけを見ていると「何も起きていない」ように見えるのが特徴。
+# Notarization 済みなら同じ操作で起動できる（spctl も accepted になる）。
+scenario_quarantine_client() {
+  echo "== シナリオ: quarantine-client（異常系: 配布後・未公証のクライアントを起動） =="
+  echo "  （注意: 実行中に『開発元を確認できないため開けません』のダイアログが出ることがあります）"
+  apply_quarantine AppA
+  assert_quarantined AppA "AppA に quarantine が付いている（配布直後の状態）"
+  assert_spctl_rejected AppA "spctl の配布可否判定が rejected（未公証のため）"
+
+  local log_a="$LOG_DIR/quarantine_client_A.log" exit_code
+  "$APP_A" >"$log_a" 2>&1
+  exit_code=$?
+  if (( exit_code == 137 )); then
+    echo "  [PASS] Gatekeeper により exec 時点で SIGKILL される（exit 137）"
+    pass_count=$((pass_count + 1))
+  else
+    echo "  [FAIL] SIGKILL されなかった（exit=$exit_code）"
+    fail_count=$((fail_count + 1))
+  fi
+  if [[ ! -s "$log_a" ]]; then
+    echo "  [PASS] 1 行もログを出せないまま死ぬ（出力が空）"
+    pass_count=$((pass_count + 1))
+  else
+    echo "  [FAIL] 出力がある（SIGKILL 前に実行されている）:"
+    sed 's/^/     /' "$log_a"
+    fail_count=$((fail_count + 1))
+  fi
+
+  echo "  -> AppA の quarantine を解除します"
+  remove_quarantine AppA
+}
+
+# SharedService だけに quarantine を付けた検証系。
+# 実測（macOS 26）: launchd（LaunchAgent）経由の起動は Gatekeeper の exec 検査を
+# 受けないため、quarantine 付き・未公証でも SharedService は起動し、通信は成立して
+# しまう。「クライアントは Gatekeeper に殺されるのに、サービスは動く」という
+# ちぐはぐな状態が起き得ることを示す。配布可否（spctl）は rejected のまま。
+scenario_quarantine_agent() {
+  echo "== シナリオ: quarantine-agent（検証系: SharedService だけ quarantine 付き → launchd 経由では起動できてしまう） =="
+  apply_quarantine SharedService
+  assert_quarantined SharedService "SharedService に quarantine が付いている（配布直後の状態）"
+  assert_spctl_rejected SharedService "spctl の配布可否判定が rejected（未公証のため）"
+  # 実行中の旧プロセスを止め、次の接続で quarantine 付きバイナリを launchd に起動させる。
+  "$ROOT/Scripts/cleanup_processes.sh" >/dev/null 2>&1 || true
+
+  local log_b="$LOG_DIR/quarantine_agent_B.log" log_a="$LOG_DIR/quarantine_agent_A.log"
+  run_pair "$APP_B" "$log_b" "$APP_A" "$log_a" "$STAGGER_NORMAL_SECONDS"
+
+  assert_log "$log_a" 'push 受信 from=AppB' "AppA が push を受信（launchd 経由は Gatekeeper 検査を受けない）"
+  assert_log "$log_b" 'push 受信 from=AppA' "AppB が push を受信（launchd 経由は Gatekeeper 検査を受けない）"
+
+  echo "  -> SharedService の quarantine を解除します"
+  remove_quarantine SharedService
+  "$ROOT/Scripts/cleanup_processes.sh" >/dev/null 2>&1 || true
+}
+
 run_scenario() {
   case "$1" in
     normal) scenario_normal ;;
@@ -327,11 +427,13 @@ run_scenario() {
     no-shared-service) scenario_no_shared_service ;;
     sandbox-agent) scenario_sandbox_agent ;;
     sandbox-all) scenario_sandbox_all ;;
+    quarantine-client) scenario_quarantine_client ;;
+    quarantine-agent) scenario_quarantine_agent ;;
     *)
       echo "unknown scenario: $1" >&2
-      echo "usage: $0 <Configuration> <normal|reverse-order|simultaneous|peer-absent|no-shared-service|sandbox-agent|sandbox-all|all>" >&2
+      echo "usage: $0 <Configuration> <normal|reverse-order|simultaneous|peer-absent|no-shared-service|sandbox-agent|sandbox-all|quarantine-client|quarantine-agent|all>" >&2
       echo "  (省略時 Configuration=Debug, scenario=normal)" >&2
-      echo "  (all は sandbox-* を含まない。署名を差し替えるため個別に実行する)" >&2
+      echo "  (all は sandbox-* / quarantine-* を含まない。署名や拡張属性を差し替えるため個別に実行する)" >&2
       exit 1
       ;;
   esac
