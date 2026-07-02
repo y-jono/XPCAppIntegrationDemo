@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- sandbox-agent / sandbox-all シナリオが再署名で差し替える検証用 entitlements。
+	     App Sandbox を有効にしただけの最小構成（mach-lookup / mach-register の
+	     例外は一切付けない）で、sandbox が XPC 通信を阻むケースを再現する。 -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+</dict>
+</plist>

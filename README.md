@@ -81,6 +81,7 @@ ConfigurationB/Scripts/test_scenario.sh Debug
 - 引数なし → `normal`（AppB → AppA の順で起動する基本の正常系）だけを実行します。
 - `all` を付けると、起動順序や異常系まで含めてまとめて検証します。
 - 個別のシナリオも指定できます（`normal` / `reverse-order` / `simultaneous` / `peer-absent` / `no-shared-service`）。
+- App Sandbox の影響を検証する `sandbox-agent` / `sandbox-all` もあります（後述）。ビルド済み `.app` の署名を一時的に差し替えるため `all` には含まれず、個別に実行します。
 
 各シナリオはログを `grep` して自動で PASS / FAIL を判定します。`no-shared-service` は検証のため SharedService の LaunchAgent を一時的に外しますが、実行後に自動で登録し直します。
 
@@ -142,6 +143,24 @@ ls -ld ConfigurationB/build/Debug/SharedService.app
 plutil -p ConfigurationB/build/Debug/SharedService.app/Contents/Info.plist
 plutil -extract CFBundlePackageType raw ConfigurationB/build/Debug/SharedService.app/Contents/Info.plist
 ```
+
+## App Sandbox が XPC 通信に与える影響の検証
+
+Notarization を見据えて配布形態を整えるとき、App Sandbox を有効にすることがあります。sandbox は XPC の Mach サービス通信に直接影響するため、専用のシナリオで検証できます。どちらもビルド済み `.app` の entitlements を差し替えて ad-hoc 再署名し、実行後に元へ戻す自己完結型です。
+
+```sh
+ConfigurationB/Scripts/test_scenario.sh Debug sandbox-agent
+ConfigurationB/Scripts/test_scenario.sh Debug sandbox-all
+```
+
+実測（macOS 26）で確認できる挙動は次のとおりです。
+
+- **`sandbox-agent`（SharedService だけ sandbox 化）**: 通信は**成立します**。自分の LaunchAgent ジョブが `MachServices` で宣言した名前への check-in は、App Sandbox でも許可されるためです。エラーは何も出ません。
+- **`sandbox-all`（3 つとも sandbox 化）**: クライアント側の Mach サービス名の照会（mach-lookup）が sandbox に拒否され、**接続は即座に無効化**、同期呼び出しはすべて `同期 proxy error: Couldn't communicate with a helper application.` になります。launchd に要求が届かないため、SharedService は起動すらしません。
+
+sandbox に阻まれたかどうかの見分け方（検出手段）はシナリオが実演します。詳しくは [DIAGNOSIS.md](DIAGNOSIS.md) の「8. App Sandbox による拒否」を参照してください。
+
+> 注意: Release ビルドに対して sandbox-* シナリオを実行すると、署名が Apple Development から ad-hoc に変わったままになります。実行後に `build.sh Release` でビルドし直してください。
 
 ## Debug と Release でだけ挙動が変わる原因
 
