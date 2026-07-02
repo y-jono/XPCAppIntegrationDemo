@@ -1,18 +1,8 @@
 import Foundation
 import AppKit
-import Security
 
 // SharedService が単一 vendor になり、AppA/AppB は client として接続する。
-@objc(SharedXPCProtocol)
-protocol SharedXPCProtocol {
-    func ping(_ clientName: String, message: String, withReply reply: @escaping (String) -> Void)
-}
-
-@objc(ClientCallbackProtocol)
-protocol ClientCallbackProtocol {
-    func callback(_ message: String, withReply reply: @escaping (String) -> Void)
-}
-
+// AppA/AppB 間のやり取りは、ここが持つ「接続中の client 一覧」への即時 push で行う（永続化はしない）。
 final class Logger {
     static func log(_ message: String) {
         let stamp = ISO8601DateFormatter().string(from: Date())
@@ -20,64 +10,82 @@ final class Logger {
     }
 }
 
-final class SharedService: NSObject, SharedXPCProtocol {
-    func ping(_ clientName: String, message: String, withReply reply: @escaping (String) -> Void) {
-        Logger.log("受信 ping client=\(clientName) message=\(message)")
-        reply("SharedService pong to \(clientName): \(message)")
+final class ConnectionRegistry {
+    private let lock = NSLock()
+    private var connections: [String: NSXPCConnection] = [:]
+
+    func register(name: String, connection: NSXPCConnection) {
+        lock.lock(); connections[name] = connection; lock.unlock()
+        Logger.log("register clientName=\(name)")
+    }
+
+    func unregister(connection: NSXPCConnection) {
+        lock.lock()
+        if let name = connections.first(where: { $0.value === connection })?.key {
+            connections.removeValue(forKey: name)
+            Logger.log("unregister clientName=\(name)")
+        }
+        lock.unlock()
+    }
+
+    func connection(for name: String) -> NSXPCConnection? {
+        lock.lock(); defer { lock.unlock() }
+        return connections[name]
+    }
+}
+
+// 1接続ごとに生成される。SharedXPCProtocol の実処理は ConnectionRegistry へ委譲する。
+final class ClientSession: NSObject, SharedXPCProtocol {
+    private weak var connection: NSXPCConnection?
+    private let registry: ConnectionRegistry
+
+    init(connection: NSXPCConnection, registry: ConnectionRegistry) {
+        self.connection = connection
+        self.registry = registry
+    }
+
+    func register(clientName: String, withReply reply: @escaping (Bool) -> Void) {
+        guard let connection else { reply(false); return }
+        registry.register(name: clientName, connection: connection)
+        reply(true)
+    }
+
+    func send(_ card: GreetingCard, withReply reply: @escaping (Bool) -> Void) {
+        guard let target = registry.connection(for: card.to) else {
+            Logger.log("push 失敗: \(card.to) は未接続")
+            reply(false)
+            return
+        }
+        let proxy = target.remoteObjectProxyWithErrorHandler { error in
+            Logger.log("push error to=\(card.to): \(error.localizedDescription)")
+        } as? ClientCallbackProtocol
+        guard let proxy else {
+            reply(false)
+            return
+        }
+        Logger.log("push 送信 from=\(card.from) to=\(card.to) text=\(card.text)")
+        proxy.receive(card) {
+            Logger.log("push 到達確認 to=\(card.to)")
+        }
+        reply(true)
     }
 }
 
 final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
+    private let registry = ConnectionRegistry()
+
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
         Logger.log("shouldAcceptNewConnection pid=\(connection.processIdentifier)")
-        guard validateCodeSignature(pid: connection.processIdentifier) else {
-            Logger.log("requirement 不一致で拒否 pid=\(connection.processIdentifier)")
-            return false
-        }
-        connection.exportedInterface = NSXPCInterface(with: SharedXPCProtocol.self)
-        connection.exportedObject = SharedService()
-        connection.remoteObjectInterface = NSXPCInterface(with: ClientCallbackProtocol.self)
+        connection.exportedInterface = makeSharedXPCInterface()
+        connection.exportedObject = ClientSession(connection: connection, registry: registry)
+        connection.remoteObjectInterface = makeClientCallbackInterface()
         connection.interruptionHandler = { Logger.log("接続 interruption pid=\(connection.processIdentifier)") }
-        connection.invalidationHandler = { Logger.log("接続 invalidation pid=\(connection.processIdentifier)") }
+        connection.invalidationHandler = { [registry] in
+            Logger.log("接続 invalidation pid=\(connection.processIdentifier)")
+            registry.unregister(connection: connection)
+        }
         connection.resume()
         return true
-    }
-
-    private func validateCodeSignature(pid: pid_t) -> Bool {
-        #if DEBUG
-        Logger.log("署名検査: DEBUG ビルドのため requirement チェックをスキップ")
-        return true
-        #else
-        // Release 差分の観察用。実運用では Team ID や bundle id の requirement を評価する。
-        let attributes = [kSecGuestAttributePid: pid] as CFDictionary
-        var code: SecCode?
-        let status = SecCodeCopyGuestWithAttributes(nil, attributes, [], &code)
-        guard status == errSecSuccess, let code else {
-            Logger.log("署名検査: SecCodeCopyGuestWithAttributes 失敗 status=\(status)")
-            return false
-        }
-        let validityStatus = SecCodeCheckValidity(code, [], nil)
-        Logger.log("署名検査: SecCodeCheckValidity status=\(validityStatus)")
-
-        let requirementText = selectedRequirementText()
-        var requirement: SecRequirement?
-        let requirementStatus = SecRequirementCreateWithString(requirementText as CFString, [], &requirement)
-        guard requirementStatus == errSecSuccess, let requirement else {
-            Logger.log("署名検査: SecRequirementCreateWithString 失敗 status=\(requirementStatus) requirement=\(requirementText)")
-            return false
-        }
-        let checkStatus = SecCodeCheckValidity(code, [], requirement)
-        Logger.log("署名検査: requirement='\(requirementText)' status=\(checkStatus)")
-        return checkStatus == errSecSuccess
-        #endif
-    }
-
-    private func selectedRequirementText() -> String {
-        #if USE_CORRECT_REQUIREMENT
-        return #"anchor apple generic and certificate leaf[subject.OU] = "EXAMPLE123""#
-        #else
-        return #"anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"#
-        #endif
     }
 }
 
