@@ -1,266 +1,291 @@
 # 入門ガイド — README / DIAGNOSIS を読むための前提知識
 
-このドキュメントは、`README.md` と `DIAGNOSIS.md` に出てくる用語を**ゼロから**理解するための補助教材です。XPC・launchd・コード署名の知識がなくても、上から順に読めば両ドキュメントが読めるようになることを目指します。
+`README.md` と `DIAGNOSIS.md` に出てくる用語を、前提知識なしで理解するための解説です。XPC・launchd・コード署名を知らなくても、上から順に読めば 2 つのドキュメントが読めるようになることを目指します。
 
-> 読む順番の目安: まず本書の「1〜4」を読むと README の前半が、「5〜8」を読むと署名まわりが、「9〜11」を読むと原因リストと診断コマンドが理解できます。急ぐ場合は **11 の用語集**と**12 の診断コマンドの読み方**だけ先に見ても構いません。
+このガイドでは、理解を助けるために「電話」のたとえを使います。技術用語には対応するたとえを添えますが、正式な用語も併記するので、読み終えたらたとえは忘れて構いません。
+
+> **読む順番の目安**
+> - README の前半を読みたい → まず 1〜4
+> - 署名まわりを読みたい → 5〜8
+> - 原因リストと診断コマンドを読みたい → 9〜12
+> - 急ぐなら 11（用語集）と 12（コマンドの読み方）だけ先に見ても構いません。
 
 ---
 
 ## 0. この問題を一言で
 
-> **2つのアプリ（AppA / AppB）が会話する。Debug ビルドでは会話できるのに、Release ビルドでは会話できない。なぜか。**
+> **2 つのアプリ（AppA / AppB）が SharedService を通じて通信する。Debug ビルドでは通信できるのに、Release ビルドではできない。なぜか。**
 
-「会話」の仕組みが **XPC**、会話相手を見つける「電話帳」が **launchd / Mach service**、相手が本物かを確かめる「身分証」が **コード署名**です。Debug と Release ではこの3つの条件が微妙に変わるため、Release だけ会話に失敗することがあります。
-
----
-
-## 1. 大前提: プロセスとプロセス間通信 (IPC)
-
-- **プロセス** = 実行中のアプリ1個。AppA と AppB は**別プロセス**＝別々のメモリ空間で動く、別人です。
-- 別人どうしなので、関数を直接呼び合えません。間に「通信」が必要です。これが **IPC (Inter-Process Communication)**。
-- 昔の macOS は **NSConnection** という IPC を使っていましたが、非推奨 (deprecated) になりました。後継が **XPC**（`NSXPCConnection`）です。
-- このプロジェクトは「NSConnection → XPC へ載せ替えたら Release で動かない」という移行トラブルの再現です。
+たとえで言うと、通信の仕組みが **XPC**（電話）、相手を見つける仕組みが **launchd / Mach サービス**（電話帳）、相手が本物かを確かめる仕組みが **コード署名**（本人確認）です。Debug と Release ではこれらの条件が少しずつ変わるため、Release だけ通信に失敗することがあります。
 
 ---
 
-## 2. XPC の基本モデル
+## 1. 前提: プロセスとプロセス間通信（IPC）
 
-XPC は「相手プロセスのオブジェクトを、あたかも手元のオブジェクトのように呼ぶ」仕組みです。登場人物は3つ:
+- **プロセス** = 実行中のアプリ 1 つ。AppA と AppB は別プロセス、つまり別々のメモリ空間で動く独立したプログラムです。
+- 別プロセスどうしは、相手の関数を直接呼べません。間に「通信」の仕組みが必要です。これが **IPC（Inter-Process Communication、プロセス間通信）**。
+- 昔の macOS は **NSConnection** という IPC を使っていましたが、非推奨（deprecated）になりました。後継が **XPC**（`NSXPCConnection`）です。
+- このプロジェクトは「NSConnection から XPC に移したら Release で動かなくなった」という移行トラブルの再現です。
 
-| 用語 | 役割 | 例え |
+---
+
+## 2. XPC の基本
+
+XPC は「相手プロセスのオブジェクトを、手元のオブジェクトのように呼ぶ」仕組みです。登場人物は 3 つ。
+
+| 用語 | 役割 | たとえ |
 |---|---|---|
-| **`NSXPCListener`** | 接続を**待ち受ける**側（サーバー役） | 電話を受ける人 |
-| **`NSXPCConnection`** | 接続を**かける**側（クライアント役） | 電話をかける人 |
-| **proxy（プロキシ）** | 相手オブジェクトの「影武者」。これを呼ぶと相手側で実行される | 受話器 |
+| **`NSXPCListener`** | 接続を待ち受ける側（サーバー役） | 電話を受ける人 |
+| **`NSXPCConnection`** | 接続をかける側（クライアント役） | 電話をかける人 |
+| **proxy（代理オブジェクト）** | 相手のオブジェクトの代わり。これを呼ぶと相手側で処理が動く | 受話器 |
 
 ### インターフェース（何を呼べるかの取り決め）
-電話で話す「話題のリスト」を事前に決めます。それが **protocol**（`@objc` を付けて Objective-C 互換にする）。接続には2つの向きがあります:
 
-- **`remoteObjectInterface`**: 「**相手に**呼んでもらう／相手を呼ぶ」ためのインターフェース（=相手が提供する機能）。
-- **`exportedInterface` + `exportedObject`**: 「**自分が**提供する」機能と、その実体オブジェクト。
+呼び出せるメソッドの一覧を、あらかじめ両者で決めておきます。それが **protocol**（`@objc` を付けて Objective-C 互換にします）。接続には 2 つの向きがあります。
 
-> 例（本プロジェクトの AppA）: `remoteObjectInterface` に SharedService の機能（`register` / `send`）を設定して呼び出す一方、`exportedInterface` + `exportedObject` に「push を受け取る」機能（`receive`）を設定しておく。SharedService は AppA が `send` した瞬間、AppB の接続へ向けて `receive` を**呼び返す**。1本の接続の中で「呼ぶ」と「呼ばれる」が両方成立しているのがポイント。
+- **`remoteObjectInterface`**: 相手が提供する機能。自分が呼び出す側の取り決め。
+- **`exportedInterface` + `exportedObject`**: 自分が提供する機能と、その実体オブジェクト。相手から呼ばれる側の取り決め。
 
-### 接続の状態を知るハンドラ（ログの要）
-- **`shouldAcceptNewConnection`**: listener 側で「この接続を受けるか？」を判断する関門。ここで相手の身分（署名）を検査し、ダメなら `false`（＝拒否）。
-- **`interruptionHandler`**: 相手プロセスが落ちた等で**一時中断**したとき呼ばれる。
-- **`invalidationHandler`**: 接続が**完全に無効化**されたとき呼ばれる。
-- **`synchronousRemoteObjectProxyWithErrorHandler`**: **同期**（返事が来るまで待つ）でプロキシを取る。`errorHandler` に失敗理由が渡る。**ここをログに出さないと真因が消える**ので、診断では最重要。
+> 例（本プロジェクトの AppA）: `remoteObjectInterface` に SharedService の機能（`register` / `send`）を設定して呼び出す一方、`exportedInterface` + `exportedObject` に「push を受け取る」機能（`receive`）を設定しておきます。SharedService は AppA が `send` した瞬間、宛先クライアントの接続に向けて `receive` を呼び返します。1 本の接続の中で「呼ぶ」と「呼ばれる」が両方成り立っているのがポイントです。
+
+### 接続の状態を知るハンドラ（ログで重要）
+
+- **`shouldAcceptNewConnection`**: listener 側で「この接続を受けるか」を判断する場所。相手の署名を検査して拒否することもできます（本プロジェクトは検査せず、すべて受け入れます）。
+- **`interruptionHandler`**: 相手プロセスが落ちるなどして接続が一時中断したときに呼ばれます。
+- **`invalidationHandler`**: 接続が完全に無効化されたときに呼ばれます。
+- **`synchronousRemoteObjectProxyWithErrorHandler`**: 返事が来るまで待つ同期呼び出しで proxy を取ります。失敗理由は `errorHandler` に渡されます。**これをログに出さないと失敗理由を確認できない**ため、診断ではもっとも重要です。
 
 ---
 
-## 3. 名前付き Mach サービスと launchd（なぜ「登録」が要るか）
+## 3. Mach サービスと launchd（なぜ「登録」が要るか）
 
-ここが XPC 最大のつまずきポイントです。
+ここが XPC で最もつまずきやすい部分です。
 
-### Mach service と bootstrap = 電話交換台
-- AppA が SharedService に電話したいとき、SharedService の「番号」を知る必要があります。XPC ではこの番号が **Mach service 名**（例 `com.example.shared.service`）。
-- 番号から相手を見つける「電話交換台」が **bootstrap** という仕組みで、その管理人が **launchd**（macOS の常駐管理プロセス）。
-- **重要**: 電話帳に番号が**登録されていないと**、`bootstrap_look_up`（番号照会）は失敗します。アプリが `NSXPCListener(machServiceName: "...")` を作って `resume()` しても、**その名前を launchd に登録していなければ、他プロセスから見つけてもらえません**。
+### Mach サービスと bootstrap（電話帳と交換台）
 
-### 登録の方法 = LaunchAgent の plist
-名前を電話帳に載せる手続きが **LaunchAgent**。`~/Library/LaunchAgents/` に置く設定ファイル（**plist** = Apple 形式の設定ファイル）です。本プロジェクトの plist の中身:
+- AppA が SharedService に接続するには、SharedService の「電話番号」が必要です。XPC ではこの番号が **Mach サービス名**（例 `com.example.shared.service`）。
+- 番号から相手を見つける仕組みが **bootstrap**、その管理役が **launchd**（macOS の常駐管理プロセス）です。番号を照会する処理を `bootstrap_look_up` と呼びます。
+- **重要**: 電話帳に番号が登録されていなければ、照会は失敗します。アプリが `NSXPCListener(machServiceName: "...")` を作って `resume()` しても、その名前を launchd に登録していない限り、他プロセスからは見つけてもらえません。
+
+### 登録の方法（LaunchAgent の plist）
+
+番号を電話帳に載せる手続きが **LaunchAgent** です。`~/Library/LaunchAgents/` に置く設定ファイル（**plist** = Apple 形式の設定ファイル）で登録します。本プロジェクトの plist の要点:
 
 ```xml
 <key>Label</key>          <!-- このジョブの名前 -->
 <string>com.example.shared.service</string>
-<key>ProgramArguments</key> <!-- launchd が起動する実行ファイルのパス＋引数 -->
+<key>ProgramArguments</key> <!-- launchd が起動する実行ファイルのパスと引数 -->
 <array><string>.../SharedService.app/Contents/MacOS/SharedService</string></array>
-<key>MachServices</key>    <!-- ★ここで電話帳に番号を登録 -->
+<key>MachServices</key>    <!-- ここで電話帳に番号を登録する -->
 <dict><key>com.example.shared.service</key><true/></dict>
-<key>RunAtLoad</key>       <!-- false = 普段は起動せず、呼ばれたら起動（オンデマンド） -->
+<key>RunAtLoad</key>       <!-- false = 常時は起動せず、呼ばれたら起動する -->
 <false/>
 <key>StandardErrorPath</key> <!-- このプロセスのエラーログの出力先 -->
 <string>/tmp/com.example.shared.service.err.log</string>
 ```
 
 ### オンデマンド起動
-`RunAtLoad=false` + `MachServices` の組み合わせで、**誰かがその番号に電話してきた瞬間に launchd がアプリを起動**します。普段は寝ていて、呼ばれたら起きる。これが「on-demand 起動」。
-→ ここに落とし穴: launchd が起動するのは plist の `ProgramArguments` のパスにある実行ファイルです。**そのパスが古い Debug ビルドを指していると、Release のつもりでも Debug が起動します**（原因 #2）。
 
-### bootstrap domain（電話帳は1冊ではない）
-電話帳は文脈ごとに分かれています:
-- **`gui/<uid>`**: GUI ログインセッション用（普通のアプリはここ）。`uid` はユーザー番号（`id -u` で確認、例 501）。
+`RunAtLoad=false` と `MachServices` を組み合わせると、誰かがその番号に接続してきた瞬間に launchd がアプリを起動します（オンデマンド起動）。常時は動かさず、呼ばれたときだけ起動する形です。
+
+注意点: launchd が起動するのは、plist の `ProgramArguments` に書かれたパスの実行ファイルです。そのパスが古い Debug ビルドを指していると、Release のつもりでも Debug が起動します（原因 #2）。
+
+### bootstrap domain（電話帳は 1 冊ではない）
+
+電話帳は状況ごとに分かれています（この分かれ方を domain と呼びます）。
+
+- **`gui/<uid>`**: GUI ログインセッション用。通常のアプリはここ。`uid` はユーザー番号（`id -u` で確認、例 501）。
 - **`user/<uid>`**: ユーザー単位。
 - **`system`**: システム全体（root）。
-同じ番号でも**別の電話帳に載っていると見つかりません**（原因 #3）。
+
+同じ番号でも別の domain に載っていると見つかりません。たとえば `gui/501` に登録したサービスは、`system` から探しても見つかりません（原因 #3）。
 
 ### launchctl コマンド（電話帳の操作）
-- `launchctl bootstrap gui/$(id -u) <plist>`: 電話帳に登録（ロード）。
-- `launchctl bootout gui/$(id -u) <plist>`: 登録解除（アンロード）。
-- `launchctl print gui/$(id -u)/<service名>`: 登録状況を表示（`state`, `program`, `MachServices` が見られる）。
-- `launchctl kickstart -k gui/$(id -u)/<service名>`: 強制的に再起動。
+
+- `launchctl bootstrap gui/$(id -u) <plist>`: 登録する。
+- `launchctl bootout gui/$(id -u) <plist>`: 登録を解除する。
+- `launchctl print gui/$(id -u)/<サービス名>`: 登録状況を表示する（`state`, `program`, `MachServices` が見られる）。
+- `launchctl kickstart -k gui/$(id -u)/<サービス名>`: 強制的に再起動する。
 
 ---
 
 ## 4. `.app` バンドルの中身
 
-macOS のアプリ（`.app`）は実は**フォルダ**です。中身の要点:
+macOS のアプリ（`.app`）は、実体はフォルダです。要点だけ示します。
 
 ```
-AppB.app/
+SharedService.app/
   Contents/
-    MacOS/AppB        ← 実際の実行ファイル（バイナリ）
-    Info.plist        ← アプリの設定（識別子・種別など）
+    MacOS/SharedService   ← 実際の実行ファイル（バイナリ）
+    Info.plist            ← アプリの設定（識別子・種別など）
 ```
 
-- **`Info.plist`** の `CFBundlePackageType = APPL` は「これはアプリです」の印。
-- **`LSUIElement = YES`** は「Dock に出さない常駐型（エージェント）」の印。本プロジェクトのアプリは UI を持たない常駐型。
-- LaunchAgent の `ProgramArguments` は、この `AppB.app/Contents/MacOS/AppB` を直接指します。
+- **`Info.plist`** の `CFBundlePackageType = APPL` は「これはアプリです」という印。
+- **`LSUIElement = YES`** は「Dock に表示しないアプリにする」設定。本プロジェクトのアプリは画面 UI を持たず常駐します。
+- LaunchAgent の `ProgramArguments` は、この `SharedService.app/Contents/MacOS/SharedService` を直接指します。
 
 ---
 
-## 5. コード署名（ゼロから）
+## 5. コード署名
 
 ### なぜ署名するか
-macOS は「このアプリは誰が作った本物か」を**デジタル署名**で確認します。XPC でも、接続相手が本物かを署名で検査できます。
 
-### 署名 identity（身分証）の種類
+macOS は「このアプリを誰が作ったか」をデジタル署名で確認します。XPC でも、接続してきた相手が本物かを署名で検査できます（本プロジェクトでは検査していませんが、仕組みとして可能です）。
+
+### 署名 identity（本人確認の証明書）の種類
+
 | 種類 | 用途 | 特徴 |
 |---|---|---|
-| **ad-hoc（Sign to Run Locally）** | ローカルで動かすだけ | チーム情報なし。`Signature=adhoc`。Debug で使用 |
-| **Apple Development** | 開発・デバッグ用 | 有料登録で発行。今回 Release でこれを使用 |
-| **Developer ID Application** | App Store 外への**配布**用 | 有料＋Account Holder のみ。**Notarization に必須**。今回はメンバーシップ期限切れで作れない |
+| **ad-hoc（Sign to Run Locally）** | 手元で動かすだけ | チーム情報を持たない。`Signature=adhoc`。Debug で使用 |
+| **Apple Development** | 開発・デバッグ用 | 有料登録で発行。本プロジェクトの Release で使用 |
+| **Developer ID Application** | App Store 外への配布用 | 有料登録の管理者のみ発行可。Notarization に必須。本プロジェクトでは扱わない |
 
-### 証明書の構造（`codesign -dv` で見える項目）
-`codesign -dv --verbose=4 AppA.app` の出力の読み方:
-- **`Identifier=com.example.AppA`**: アプリの Bundle ID（識別子）。
-- **`TeamIdentifier=EXAMPLE123`**: **Team ID**。開発者アカウントごとの10桁 ID。証明書の中では **OU**（Organizational Unit）という欄に入っている。**公開情報**（秘密ではない）。
-- **`Authority=...`**: 署名の「証明の連鎖」。`Apple Development: ...` → `Apple Worldwide Developer Relations...` → `Apple Root CA` と、Apple のルートまで遡れる。
-- **`flags=0x10000(runtime)`**: **Hardened Runtime が有効**な印（後述）。
+### 証明書の中身（`codesign -dv` で見える項目）
+
+`codesign -dv --verbose=4 SharedService.app` の出力の読み方:
+
+- **`Identifier=com.example.shared.service`**: アプリの Bundle ID（識別子）。
+- **`TeamIdentifier=EXAMPLE123`**: **Team ID**。開発者アカウントごとの 10 桁の ID。証明書の中では **OU**（Organizational Unit）という欄に入っています。秘密の値ではなく公開情報です。
+- **`Authority=...`**: 署名をたどれる証明の連なり。`Apple Development: ...` → `Apple Worldwide Developer Relations...` → `Apple Root CA` と、Apple の大元までさかのぼれます。誰が発行した署名かが分かります。
+- **`flags=0x10000(runtime)`**: Hardened Runtime が有効な印（後述）。
 
 ---
 
 ## 6. Hardened Runtime / entitlements
 
-- **Hardened Runtime**（`ENABLE_HARDENED_RUNTIME=YES`）: アプリに追加のセキュリティ制限をかける仕組み。Notarization の前提でもある。Release だけ有効にしているため、Debug/Release の挙動差の一因になりうる。
-- **entitlements**: アプリに許可する特権の一覧（plist）。`get-task-allow`（デバッガ接続許可。Debug にあり Release になし）、Library Validation（署名元が違うライブラリのロード禁止）など。
-- 注意: **XPC の「番号照会」自体は entitlement ではなく launchd 登録が前提**。Hardened Runtime が XPC 通信そのものを直接止めるわけではない。
+- **Hardened Runtime**（`ENABLE_HARDENED_RUNTIME=YES`）: アプリに追加のセキュリティ制限をかける仕組み。Notarization の前提でもあります。本プロジェクトは Release だけ有効にしているため、Debug と Release の挙動差の一因になり得ます。
+- **entitlements**: アプリに許可する特権の一覧（plist）。`get-task-allow`（デバッガ接続の許可。Debug にあり Release にない）、Library Validation（署名元が違うライブラリの読み込み禁止）などがあります。
+- 注意: Mach サービスの番号照会自体は entitlement ではなく launchd への登録が前提です。Hardened Runtime が XPC 通信そのものを止めるわけではありません。
 
 ---
 
 ## 7. Notarization / quarantine / Gatekeeper / App Translocation
 
-配布まわりの安全機構です（今回は Notarization は対象外だが、用語として登場する）:
+配布まわりの安全機構です（本プロジェクトでは Notarization は扱いませんが、用語として登場します）。
 
-- **Notarization（公証）**: Apple にアプリを送って「マルウェアでない」と認証してもらう手続き。**Developer ID 署名が必須**。
-- **quarantine（検疫）**: ネットからダウンロードしたファイルに付く印（拡張属性 `com.apple.quarantine`）。`xattr` コマンドで確認・削除。
-- **Gatekeeper**: quarantine の付いたアプリの起動可否を判定する番人。`spctl --assess` で評価を確認。
-- **App Translocation**: quarantine 付きアプリを**移動せずに**起動すると、macOS が実行ファイルを `/private/var/folders/.../AppTranslocation/...` という**ランダムな読み取り専用パスへ一時コピー**して動かす仕組み。
-  → これが起きると、LaunchAgent が固定パスを前提にしていると**パスがずれて壊れます**（原因 #6）。
+- **Notarization（公証）**: Apple にアプリを送り「マルウェアでない」と認証してもらう手続き。Developer ID 署名が必須です。
+- **quarantine（検疫）**: ネットからダウンロードしたファイルに付く印（拡張属性 `com.apple.quarantine`）。`xattr` コマンドで確認・削除できます。
+- **Gatekeeper**: quarantine の付いたアプリを起動してよいか判定する macOS の保護機能。`spctl --assess` で評価を確認できます。
+- **App Translocation**: quarantine 付きのアプリを移動せずに起動すると、macOS が実行ファイルを `/private/var/folders/.../AppTranslocation/...` という読み取り専用の一時パスにコピーして動かす仕組み。これが起きると、LaunchAgent が固定パスを前提にしているため起動対象を見失います（原因 #6）。
 
 ---
 
-## 8. Debug ビルド と Release ビルドは何が違うのか
+## 8. Debug ビルドと Release ビルドの違い
 
-「同じソースコード」でも、ビルド設定が違います。本プロジェクトでの差:
+同じソースコードでも、ビルド設定が違います。本プロジェクトでの差:
 
 | 項目 | Debug | Release |
 |---|---|---|
-| 署名 | ad-hoc (Sign to Run Locally) | Apple Development (Team `EXAMPLE123`) |
-| Hardened Runtime | 無効 | **有効** |
-| Bundle ID | `com.example.shared.service.Debug`（suffix あり） | `com.example.shared.service`（suffix なし） |
+| 署名 | ad-hoc（Sign to Run Locally） | Apple Development（Team `EXAMPLE123`） |
+| Hardened Runtime | 無効 | 有効 |
+| Bundle ID | `com.example.shared.service.Debug`（末尾に `.Debug`） | `com.example.shared.service` |
 
-→ **「Debug は通って Release だけ落ちる」のは、コードのロジックではなく、この表の差のどれかが原因**、というのが本プロジェクトの主張です。
+「Debug は通って Release だけ失敗する」のは、コードのロジックではなく、この表の差や環境の違いが原因、というのが本プロジェクトの主張です。
 
 ---
 
 ## 9. このプロジェクトの全体像
 
-- **`SharedService` だけが listener**（vendor）、AppA/AppB は client。NSConnection の対称 P2P をそのまま移すのではなく、**Apple 推奨の形**で安定しやすい構成にしています。
-- **vendor**: サービスを提供する側（listener を持つ）。**client**: 利用する側（接続する）。
-- 移行の推奨: 対称 P2P をやめ、**単一 vendor**（SharedService か LaunchAgent）に寄せる。
+- **`SharedService.app` だけが listener（提供役 = vendor）**、AppA / AppB はクライアントです。NSConnection の対等なやり取りをそのまま移すのではなく、Apple が想定する形にして安定させています。
+- **vendor / client**: サービスを提供する側（listener を持つ側）が vendor、利用する側（接続する側）が client です。
+- **push / GreetingCard**: AppA と AppB は SharedService を経由してメッセージ（`GreetingCard`）を送り合います。SharedService は `send` された瞬間に宛先クライアントへ push しますが、メッセージをためる仕組み（mailbox）はないため、相手が接続中でないと届かず消えます。
+- 移行の推奨: 対等な形をやめて listener を 1 つに絞り（本デモの SharedService）、双方向が必要なら提供役を 1 つ挟みます。
 
 ---
 
-## 10. 「Debug成功・Release失敗」原因を素人語で
+## 10. 「Debug 成功・Release 失敗」の主な原因
 
-README の優先原因リストの言い換え:
+README の原因リストを、たとえで言い換えたものです。このプロジェクトのアプリはコード側で接続を拒否しないため、原因はすべて**環境の違い**から起きます。
 
-1. **番号が電話帳に未登録** → そもそも相手が見つからない（launchd 登録漏れ）。
-2. **電話帳の番号が古い住所を指す** → launchd が古い Debug の `.app` を起動（パス不一致）。**最頻出**。
-3. **別の電話帳を見ている** → `gui/501` に登録したのに別ドメインから探している。
-4. **Release だけの追加制限** → Hardened Runtime / entitlements の差。
-5. **検疫でアプリが別の場所にコピーされた** → translocation でパスがずれる。
-6. **エラーを握り潰している** → 同期呼び出しの errorHandler をログ化していないと真因が見えない。
+1. **番号が電話帳に未登録** — そもそも相手が見つからない（launchd への登録漏れ）。
+2. **電話帳の番号が古いパスを指す** — launchd が古い Debug の `.app` を起動する（パス不一致）。最も多い原因。
+3. **別の電話帳を見ている** — `gui/501` に登録したのに別の domain から探している。
+4. **Release だけの追加制限** — Hardened Runtime / entitlements の差。
+5. **検疫でアプリが別の場所にコピーされた** — App Translocation でパスがずれる。
+6. **エラーをログに出していない** — 同期呼び出しの errorHandler を出していないと失敗理由が見えない。
 
-> 補足（重要）: これらは**同じコードのまま環境差だけで壊れる「環境型」**の原因です。コード側で接続を拒否するロジックは持たせていないため、切り分けはまず launchd 登録・パス・ドメインの3点から始めるのが近道です。
+同じコードのまま環境の違いだけで失敗するので、切り分けはまず launchd への登録・パス・domain の 3 点から始めるのが近道です。
 
 ---
 
 ## 11. 用語集（README / DIAGNOSIS 早見表）
 
+読みながら分からない語が出たときの索引です。詳しい説明は本文の各節にあります。
+
 | 用語 | 一言で |
 |---|---|
-| IPC | プロセス間通信。別アプリどうしの会話 |
+| IPC | プロセス間通信。別アプリどうしのやり取り |
 | NSConnection | 旧 IPC（非推奨）。XPC の前身 |
 | XPC / NSXPCConnection | 現行 IPC。相手のオブジェクトを呼べる |
 | NSXPCListener | 接続を待ち受ける側（サーバー役） |
-| machServiceName | 相手を見つけるための「電話番号」 |
-| proxy | 相手オブジェクトの影武者。呼ぶと相手で実行 |
+| Mach サービス名 / machServiceName | 相手を見つけるための「電話番号」 |
+| proxy | 相手オブジェクトの代理。呼ぶと相手側で動く |
 | remoteObjectInterface | 相手を呼ぶための取り決め |
 | exportedInterface / exportedObject | 自分が提供する機能とその実体 |
-| shouldAcceptNewConnection | 接続を受けるか判断する関門 |
+| shouldAcceptNewConnection | 接続を受けるか判断する場所 |
 | interruption / invalidation Handler | 接続が中断/無効化されたときの通知 |
 | 同期 proxy / errorHandler | 返事を待つ呼び出しと、その失敗理由 |
-| GreetingCard | 本プロジェクトの自作クラス（`NSSecureCoding`）。AppA/AppB 間で push するオブジェクト |
-| push | 相手が接続中なら SharedService が即座に `receive` を呼び返す仕組み。mailbox は持たないので相手が未接続なら delivered=false で消える |
+| GreetingCard | 本プロジェクトの自作クラス（`NSSecureCoding`）。AppA/AppB 間で送るオブジェクト |
+| push | 相手が接続中なら SharedService が即座に `receive` を呼び返す仕組み。mailbox がないので未接続なら delivered=false で消える |
 | Mach service | XPC の通信窓口（番号で識別） |
-| bootstrap / bootstrap_look_up | 番号から相手を探す交換台と照会 |
-| launchd | macOS の常駐管理プロセス（電話帳の管理人） |
+| bootstrap / bootstrap_look_up | 番号から相手を探す仕組みと、その照会 |
+| launchd | macOS の常駐管理プロセス（電話帳の管理役） |
 | LaunchAgent / plist | サービスを登録する設定ファイル |
-| ProgramArguments | launchd が起動する実行ファイルのパス＋引数 |
-| MachServices | plist 内で番号を電話帳に載せるキー |
-| RunAtLoad | 常時起動するか。false=オンデマンド |
-| bootstrap domain (gui/user/system) | 文脈別の電話帳。gui/<uid> が GUI 用 |
+| ProgramArguments | launchd が起動する実行ファイルのパスと引数 |
+| MachServices | plist 内で番号を電話帳に登録するキー |
+| RunAtLoad | 常時起動するか。false = オンデマンド |
+| bootstrap domain（gui/user/system） | 状況別の電話帳。gui/<uid> が GUI 用 |
 | launchctl | 電話帳を操作するコマンド |
-| .app バンドル | アプリ実体（フォルダ）。中に Contents/MacOS/<exec> |
-| Info.plist / CFBundlePackageType | アプリ設定。APPL=アプリの印 |
-| LSUIElement | Dock に出ない常駐型の印 |
-| コード署名 / codesign | 「誰が作った本物か」の証明 |
-| ad-hoc / Sign to Run Locally | チーム無しのローカル署名 |
+| .app バンドル | アプリの実体（フォルダ）。中に Contents/MacOS/<exec> |
+| Info.plist / CFBundlePackageType | アプリ設定。APPL = アプリの印 |
+| LSUIElement | Dock に表示しないアプリにする設定 |
+| コード署名 / codesign | 誰が作ったかの証明と、その確認コマンド |
+| ad-hoc / Sign to Run Locally | チーム情報を持たないローカル署名 |
 | Apple Development | 開発用署名 |
 | Developer ID Application | 配布用署名（Notarization 必須） |
-| Team ID / OU | 開発者アカウントの10桁ID（証明書のOU欄） |
-| Hardened Runtime / flags=runtime | 追加セキュリティ制限（Release で有効） |
-| entitlements / get-task-allow | 特権一覧 / デバッガ許可（Debugのみ） |
-| Notarization | Apple の公証。Developer ID 必須 |
+| Team ID / OU | 開発者アカウントの 10 桁 ID（証明書の OU 欄） |
+| Hardened Runtime / flags=runtime | 追加のセキュリティ制限（Release で有効） |
+| entitlements / get-task-allow | 特権の一覧 / デバッガ許可（Debug のみ） |
+| Notarization | Apple の公証。Developer ID が必須 |
 | quarantine | ダウンロード由来の検疫印 |
-| Gatekeeper / spctl | 起動可否の番人 / 評価コマンド |
-| App Translocation | 検疫アプリをランダムパスへ一時コピーする機構 |
+| Gatekeeper / spctl | 起動可否を判定する保護機能 / 評価コマンド |
+| App Translocation | 検疫アプリを一時パスへコピーして動かす仕組み |
 
 ---
 
-## 12. 診断コマンドの「出力の読み方」
+## 12. 診断コマンドの出力の読み方
 
-DIAGNOSIS のコマンドは「実行して終わり」ではなく**出力を読む**のが本番です。
+DIAGNOSIS のコマンドは、実行して終わりではなく出力を読むことが目的です。
 
 ### `launchctl print gui/$(id -u)/com.example.shared.service`
-- `state = running / not running`: 今起動しているか。
-- `program = .../build/Debug/...` or `.../build/Release/...`: **どのビルドを指しているか**（原因 #2 の核心。Release を検証中なのに Debug を指していたら NG）。
-- `Could not find service ...`: **電話帳に未登録**（原因 #1 / ドメイン違い #3）。
 
-### `codesign -dv --verbose=4 AppA.app`
-- `Identifier=` が `.Debug` 付きか無しか → どのビルドか。
+- `state = running / not running`: いま起動しているか。
+- `program = .../build/Debug/...` or `.../build/Release/...`: どのビルドを指しているか。Release を検証中なのに Debug を指していたら原因 #2 です。
+- `Could not find service ...`: 電話帳に未登録（原因 #1、または domain 違いの #3）。
+
+### `codesign -dv --verbose=4 SharedService.app`
+
+- `Identifier=` の末尾が `.Debug` か無しか → どのビルドか。
 - `TeamIdentifier=EXAMPLE123` → Team ID。
 - `flags=0x10000(runtime)` → Hardened Runtime 有効（Release のはず）。
 - `Authority=Apple Development:...` → どの種類の署名か。
 
-### ログ（最重要の真因はここ）
-- クライアント側 stderr に `同期 proxy error: Couldn't communicate with a helper application.` → 「会話に失敗した」事実だけ。**理由はここには出ない**。
-- クライアント側 stderr に `送信結果 to=... delivered=false` → 会話（接続）自体は成功しているが、**push した瞬間に相手が接続していなかった**ことを意味する。mailbox を持たない設計なので、この場合メッセージは失われる。
-- listener 側ログ（`/tmp/com.example.shared.service.err.log`）に `shouldAcceptNewConnection` や `interruption` / `invalidation` が出ているか → 接続がどこまで進んだかの手がかり。
-- `log stream --style compact --predicate '...'`: システム全体のログをリアルタイム表示。`com.example` や `AppTranslocation` で絞り込む。
+### ログ（失敗の理由はここ）
 
-> **診断の鉄則**: クライアントの「失敗した」だけ見て悩まない。**listener 側のログ**と **`launchctl print` の `program` パス**を必ず突き合わせる。Release 失敗の真因はたいていこの2か所に出ます。
+- クライアント側 stderr の `同期 proxy error: Couldn't communicate with a helper application.` → 「通信に失敗した」事実だけで、理由はここには出ません。
+- クライアント側 stderr の `送信結果 to=... delivered=false` → 接続自体は成功しているが、push した瞬間に相手が接続していなかったという意味です。mailbox がないため、この場合メッセージは失われます。
+- listener 側ログ（`/tmp/com.example.shared.service.err.log`）に `shouldAcceptNewConnection` や `interruption` / `invalidation` が出ているか → 接続がどこまで進んだかの手がかりです。
+- `log stream --style compact --predicate '...'` → システム全体のログをリアルタイム表示。`com.example` や `AppTranslocation` で絞り込みます。
+
+> **診断のコツ**: クライアント側の「失敗した」だけを見て悩まないこと。listener 側のログと `launchctl print` の `program` パスを必ず突き合わせます。Release 失敗の理由は、たいていこの 2 か所に出ます。
 
 ---
 
 ## 13. 次の一歩
 
-このガイドで README / DIAGNOSIS が読めるようになったら、実際に手を動かす順番:
+このガイドで README / DIAGNOSIS が読めるようになったら、次の順で手を動かしてみてください。詳しいコマンドは [DIAGNOSIS.md](DIAGNOSIS.md) にあります。
 
-1. `DIAGNOSIS.md` の「7. 同期 XPC 呼び出しの errorHandler」を Debug で実行し、**成功時のログ**を見て慣れる。
-2. `DIAGNOSIS.md` の「Debug パス事故の再現」を実行し、Debug の LaunchAgent を登録したまま Release をテストして**失敗を再現**する。
-3. `install_launchagents.sh Release` で plist を再登録し、**直る**ことを確認する。
-4. 自分の実アプリに当てはめる: LaunchAgent のパスは正しいか / Mach service は登録されているか / Debug と Release で何が違うか、を上の読み方で確認する。
+1. DIAGNOSIS の「7. 同期呼び出しのエラーと push の到達」を Debug で実行し、成功時のログに慣れる。
+2. DIAGNOSIS の「LaunchAgent が Debug を指したままになる問題の再現」を実行し、Debug の LaunchAgent を登録したまま Release をテストして失敗を再現する。
+3. `install_launchagents.sh Release` で plist を登録し直し、解消することを確認する。
+4. 自分のアプリに当てはめる。LaunchAgent のパスは正しいか、Mach サービスは登録されているか、Debug と Release で何が違うかを、上の読み方で確認する。
